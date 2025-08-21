@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Password Cracker Pro - Web</title>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --danger:#ef4444; }
+    html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Cantarell, Noto Sans, Ubuntu, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    .container { max-width: 900px; margin: 32px auto; padding: 0 16px; }
+    .card { background:var(--panel); border-radius:12px; padding:20px; box-shadow: 0 10px 20px rgba(0,0,0,.35); }
+    h1 { margin:0 0 12px; font-size: 1.6rem; }
+    p.muted { margin:4px 0 18px; color: var(--muted); }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    .field { display:flex; flex-direction:column; gap:8px; }
+    label { font-size:.9rem; color: var(--muted); }
+    input, select { background:#0b1220; color:var(--text); border:1px solid #1f2937; border-radius:8px; padding:10px 12px; font-size:1rem; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap: wrap; }
+    button { cursor:pointer; border:none; border-radius:10px; padding:10px 14px; font-weight:600; color:#0b1220; }
+    .btn-start { background: var(--accent); }
+    .btn-stop { background: var(--danger); color:#fef2f2; }
+    .btn-disabled { opacity:.6; cursor:not-allowed; }
+    .status { margin-top:18px; background:#0b1220; border:1px solid #1f2937; border-radius:10px; padding:14px; }
+    .stat-row { display:grid; grid-template-columns: 200px 1fr; gap:10px; padding:6px 0; border-bottom:1px dashed #1f2937; }
+    .stat-row:last-child { border-bottom:none; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .footer { margin-top:12px; color:var(--muted); font-size:.85rem; }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+  <meta name="robots" content="noindex,nofollow" />
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>🔐 Password Cracker Pro — Web (Educational)</h1>
+      <p class="muted">CPU-only demo that simulates cracking by enumerating combinations. No desktop automation. For authorized educational use only.</p>
+
+      <div class="grid">
+        <div class="field">
+          <label for="target">Target password (plain before hashing)</label>
+          <input id="target" value="1234" />
+        </div>
+        <div class="field">
+          <label for="length">Password length (1–6)</label>
+          <input id="length" type="number" min="1" max="6" value="4" />
+        </div>
+        <div class="field">
+          <label for="method">Comparison method</label>
+          <select id="method">
+            <option value="plain" selected>Plain</option>
+            <option value="md5">MD5</option>
+            <option value="sha256">SHA-256</option>
+            <option value="zip">ZIP (upload locked .zip)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="charset">Charset (unique characters)</label>
+          <input id="charset" value="0123456789" />
+        </div>
+        <div class="field">
+          <label for="delay">Delay seconds per attempt (0.0–1.0)</label>
+          <input id="delay" type="number" step="0.01" min="0" max="1" value="0.01" />
+        </div>
+        <div class="field" id="zipRow" style="display:none">
+          <label for="zipfile">Locked ZIP file</label>
+          <input id="zipfile" type="file" accept=".zip" />
+          <div id="zipHint" class="muted">Upload the locked .zip, then click Start (ZIP mode).</div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:16px">
+        <button id="start" class="btn-start">🚀 Start</button>
+        <button id="stop" class="btn-stop">⏹️ Stop</button>
+        <span id="error" style="color:#fecaca; font-weight:600"></span>
+      </div>
+
+      <div class="status" id="statusBox">
+        <div class="stat-row"><div>Status</div><div id="s-running">Idle</div></div>
+        <div class="stat-row"><div>Attempts</div><div id="s-attempts">0</div></div>
+        <div class="stat-row"><div>Current password</div><div><code id="s-current">—</code></div></div>
+        <div class="stat-row"><div>Elapsed</div><div id="s-elapsed">0.00s</div></div>
+        <div class="stat-row"><div>Rate</div><div id="s-rate">0.00/sec</div></div>
+        <div class="stat-row"><div>Found</div><div><code id="s-found">—</code></div></div>
+        <div class="stat-row"><div>Completed</div><div id="s-completed">false</div></div>
+        <div class="stat-row"><div>Success</div><div id="s-success">false</div></div>
+        <div class="stat-row" id="artifactRow" style="display:none"><div>Unlocked ZIP</div><div><a id="artifactLink" href="#">Download</a></div></div>
+      </div>
+
+      <div class="footer">Tip: Using <code>plain</code> with numeric charset is fastest. Larger lengths grow as 10^n.</div>
+    </div>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const errEl = document.getElementById('error');
+
+    let timer = null;
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) throw new Error('status HTTP ' + res.status);
+        const s = await res.json();
+        updateStatus(s);
+      } catch (e) {
+        errEl.textContent = String(e);
+      }
+    }
+
+    function updateStatus(s) {
+      document.getElementById('s-running').textContent = s.is_running ? 'Running' : (s.completed ? 'Completed' : 'Idle');
+      document.getElementById('s-attempts').textContent = s.attempts;
+      document.getElementById('s-current').textContent = s.current_password || '—';
+      document.getElementById('s-elapsed').textContent = (s.elapsed_seconds || 0).toFixed(2) + 's';
+      document.getElementById('s-rate').textContent = (s.rate_per_second || 0).toFixed(2) + '/sec';
+      document.getElementById('s-found').textContent = s.found_password || '—';
+      document.getElementById('s-completed').textContent = String(!!s.completed);
+      document.getElementById('s-success').textContent = String(!!s.success);
+
+      startBtn.classList.toggle('btn-disabled', s.is_running);
+      startBtn.disabled = !!s.is_running;
+      stopBtn.classList.toggle('btn-disabled', !s.is_running);
+      stopBtn.disabled = !s.is_running;
+    }
+
+    async function start() {
+      errEl.textContent = '';
+      const payload = {
+        target_password: document.getElementById('target').value,
+        method: document.getElementById('method').value,
+        password_length: Number(document.getElementById('length').value),
+        delay_seconds: Number(document.getElementById('delay').value),
+        charset: document.getElementById('charset').value,
+      };
+      if (payload.method === 'zip') {
+        // Upload ZIP first
+        const fileInput = document.getElementById('zipfile');
+        if (!fileInput.files || !fileInput.files[0]) {
+          errEl.textContent = 'Please choose a .zip file';
+          return;
+        }
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        const up = await fetch('/api/upload-zip', { method: 'POST', body: fd });
+        const upData = await up.json();
+        if (!up.ok || !upData.ok) {
+          errEl.textContent = upData.error || 'Upload failed';
+          return;
+        }
+        payload.zip_token = upData.token;
+      }
+      try {
+        const res = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || ('start HTTP ' + res.status));
+        }
+        fetchStatus();
+      } catch (e) {
+        errEl.textContent = String(e);
+      }
+    }
+
+    async function stop() {
+      errEl.textContent = '';
+      try {
+        await fetch('/api/stop', { method: 'POST' });
+        fetchStatus();
+      } catch (e) {
+        errEl.textContent = String(e);
+      }
+    }
+
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+    timer = setInterval(fetchStatus, 500);
+    fetchStatus();
+
+    // Toggle ZIP upload UI
+    const methodSel = document.getElementById('method');
+    function toggleZipRow() {
+      const show = methodSel.value === 'zip';
+      document.getElementById('zipRow').style.display = show ? '' : 'none';
+    }
+    methodSel.addEventListener('change', toggleZipRow);
+    toggleZipRow();
+
+    // Show download link when artifact available
+    async function enhanceStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const s = await res.json();
+        const row = document.getElementById('artifactRow');
+        const link = document.getElementById('artifactLink');
+        if (s.artifact_path && s.success && s.completed) {
+          row.style.display = '';
+          link.href = '/api/download';
+        } else {
+          row.style.display = 'none';
+        }
+      } catch {}
+    }
+    setInterval(enhanceStatus, 1000);
+  </script>
+</body>
+<!-- Educational use only -->
+</html>
+
+
